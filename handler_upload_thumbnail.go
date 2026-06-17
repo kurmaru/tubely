@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,7 +45,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer file.Close()
-	mediaType := header.Header.Get("Content-Type")
+	contentType := header.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Can't parse content type", err)
+		return
+	}
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", err)
+		return
+	}
 
 	dbVid, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -61,17 +71,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	mediaTypeParts := strings.Split(mediaType, "/")
-	fileExt := ""
-	switch len(mediaTypeParts) {
-	case 1:
-		fileExt = mediaTypeParts[0]
-	case 2:
-		fileExt = mediaTypeParts[1]
-	}
-	if fileExt == "" {
-		respondWithError(w, http.StatusBadRequest, "Content-Type invalid", nil)
-		return
-	}
+	fileExt := mediaTypeParts[1]
 
 	fileName := fmt.Sprintf("%v.%v", videoID.String(), fileExt)
 	path := filepath.Join(cfg.assetsRoot, fileName)
@@ -80,6 +80,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Failed to create file", err)
 		return
 	}
+	defer fileFS.Close()
+
 	_, err = io.Copy(fileFS, file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to update file", err)
