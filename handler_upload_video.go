@@ -67,6 +67,26 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	}
 }
 
+func processVideoForFastStart(filePath string) (string, error) {
+	newPath := filePath + ".processing"
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i",
+		filePath,
+		"-c",
+		"copy",
+		"-movflags",
+		"faststart",
+		"-f",
+		"mp4",
+		newPath,
+	)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return newPath, nil
+}
+
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	const videoSizeLimit = 1 << 30
 	r.Body = http.MaxBytesReader(w, r.Body, videoSizeLimit)
@@ -158,9 +178,16 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		prefix = "portrait"
 	}
 
-	_, err = tempFile.Seek(0, io.SeekStart)
+	processedVidPath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Internal server error", err)
+		fmt.Println(err)
+		respondWithError(w, http.StatusInternalServerError, "Coudn't process video", err)
+		return
+	}
+
+	processedFile, err := os.Open(processedVidPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Coudn't open processed file", err)
 		return
 	}
 
@@ -172,7 +199,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &mediatype,
 	})
 	if err != nil {
