@@ -1,20 +1,71 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
+
+type Ratio string
+
+const (
+	Ratio16_9  Ratio = "16:9"
+	Ratio9_16  Ratio = "9:16"
+	RatioOther Ratio = "other"
+)
+
+type VideoStreamRes struct {
+	Streams []struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	} `json:"streams"`
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	stdout := bytes.Buffer{}
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	res := VideoStreamRes{}
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
+		return "", err
+	}
+
+	if len(res.Streams) < 1 {
+		return "", errors.New("Invalid streams length")
+	}
+
+	width := res.Streams[0].Width
+	height := res.Streams[0].Height
+
+	// floor to integer and call it a day 🫠
+	// multiply to 100 to get 2 digits precision
+	ratio := width * 100 / height
+	switch ratio {
+	case 1777:
+		return string(Ratio16_9), nil
+	case 562:
+		return string(Ratio9_16), nil
+	default:
+		return string(RatioOther), nil
+	}
+}
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	const videoSizeLimit = 1 << 30
